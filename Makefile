@@ -23,21 +23,13 @@ else
 endif
 endif
 
-all:  fishnode-$(EXEC_SUFFIX)
+all:  json-server-$(EXEC_SUFFIX)
 
-test: fishtest-$(EXEC_SUFFIX)
-
-fishnode-$(EXEC_SUFFIX): fishnode.c
-	$(CC) $(CFLAGS) $(OSINC) $(OSLIB) $(OSDEF) fishnode.c smartalloc.c -o $@ -L. -lfish-Linux-x86_64
-
-tarball:
-	tar -czvf transfer.tgz README fish.h libfish-Linux-x86_64.a smartalloc.c smartalloc.h fishnode.c fishnode.h fishtest.c fishtest.h Makefile
+json-server-$(EXEC_SUFFIX): server.c
+	$(CC) $(CFLAGS) $(OSINC) $(OSLIB) $(OSDEF) server.c smartalloc.c -o $@
 
 handin: README
-	handin bellardo 464_p3 README fish.h libfish-Linux-x86_64.a smartalloc.c smartalloc.h fishnode.c fishnode.h Makefile
-
-fishtest-$(EXEC_SUFFIX): fishtest.c
-	$(CC) $(CFLAGS) $(OSINC) $(OSLIB) $(OSDEF) fishtest.c smartalloc.c -o $@ -L. -lfish-Linux-x86_64
+	handin bellardo 464_p3 README server.c server.h smartalloc.c smartalloc.h Makefile
 
 clean:
-	rm -rf fishnode-* fishnode-*.dSYM
+	rm -rf json-server-* json-server-*.dSYM
