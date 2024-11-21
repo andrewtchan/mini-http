@@ -134,7 +134,7 @@ int main(int argc, char **argv)
         sleep(5);
     }
 
-    printf("\nServer exiting cleanly.\n");
+    printf("Server exiting cleanly.\n");
     // clean up stuff
     close(sock_fd);
 
