@@ -10,11 +10,44 @@
 #include <signal.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/select.h>
+
+#include "server.h"
 
 int running = 1;
+struct client *client_list = NULL;
 
 void sigint_handler(int sig) {
     running = 0;
+}
+
+int init_sets(int listen_fd, fd_set *r, fd_set *w, fd_set *e) {
+    FD_ZERO(r);
+    FD_ZERO(w);
+    FD_ZERO(e);
+    FD_SET(listen_fd, r); // add listening socket to read set
+    int max_fd = listen_fd;
+
+    // loop over client list, adding fd's to sets based on state and update max
+    struct client *cur = client_list;
+    while (cur) {
+        if (cur->fd > max_fd) {
+            max_fd = cur->fd;
+        }
+        switch (cur->state) {
+            case CLIENT_READ:
+                FD_SET(cur->fd, r);
+                break;
+            case CLIENT_WRITE:
+                FD_SET(cur->fd, w);
+                break;
+            case CLIENT_EXCEPT:
+                FD_SET(cur->fd, e);
+                break;
+        }
+    }
+
+    return max_fd;
 }
 
 int main(int argc, char **argv)
@@ -143,15 +176,51 @@ int main(int argc, char **argv)
     printf("HTTPS server is using TCP port -1\n");
     fflush(stdout);
 
+    // create read, write, except fd sets
+    fd_set rfds;
+    fd_set wfds;
+    fd_set efds;
+
     // MAIN SERVER LOOP
+    int retval;
+    int max_fd;
+    int i;
     while (running) {
-        printf("server running...\n");
-        sleep(5);
+        // init fd sets from client list & set max fd value
+        max_fd = init_sets(sock_fd, &rfds, &wfds, &efds);
+
+        // get ready fds
+        retval = select(max_fd + 1, &rfds, &wfds, &efds, NULL);
+        if (retval == -1) {
+            perror("Failed to get fds in select.\n");
+            close(sock_fd);
+            return -1;
+        }
+
+        for (i = 0; i <= max_fd; i++) {
+            // read set (check for listening socket fd)
+
+            // write set
+
+            // error set
+        }
+        
     }
 
-    printf("Server exiting cleanly.\n");
     // clean up stuff
+    printf("Server exiting cleanly.\n");
     close(sock_fd);
+    struct client *cur = client_list;
+    struct client *temp = NULL;
+    while (cur) {
+        temp = cur->next;
+        free(cur->buff);
+        close(cur->fd);
+        free(cur);
+        cur = temp;
+    }
+    cur = NULL;
+    temp = NULL;
 
     return 0;
 }
