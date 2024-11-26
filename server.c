@@ -9,6 +9,7 @@
 #include <netinet/in.h>
 #include <signal.h>
 #include <errno.h>
+#include <fcntl.h>
 
 int running = 1;
 
@@ -50,13 +51,13 @@ int main(int argc, char **argv)
     if (addr_version == AF_INET) {
         sock_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (sock_fd < 0) {
-            perror("Error creating socket.\n");
+            perror("Failed to create socket.\n");
             return -1;
         }
     } else {
         sock_fd = socket(AF_INET6, SOCK_STREAM, 0);
         if (sock_fd < 0) {
-            perror("Error creating socket.\n");
+            perror("Failed to create socket.\n");
             return -1;
         }
         int sock_opt = 0;
@@ -65,6 +66,20 @@ int main(int argc, char **argv)
             close(sock_fd);
             return -1;
         }
+    }
+
+    // put socket in non-blocking mode
+    int cntl_flag;
+    cntl_flag = fcntl(sock_fd, F_GETFL, 0);
+    if (cntl_flag == -1) {
+        perror("Failed to get socket flags.\n");
+        close(sock_fd);
+        return -1;
+    }
+    if (fcntl(sock_fd, F_SETFL, cntl_flag | O_NONBLOCK) == -1) {
+        perror("Failed to set socket flags.\n");
+        close(sock_fd);
+        return -1;
     }
 
     // bind socket to address and port (handle v4 or v6)
