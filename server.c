@@ -45,9 +45,92 @@ int init_sets(int listen_fd, fd_set *r, fd_set *w, fd_set *e) {
                 FD_SET(cur->fd, e);
                 break;
         }
+        cur = cur->next;
     }
 
     return max_fd;
+}
+
+void handle_read(struct client *client) {
+    return;
+}
+
+void handle_write(struct client *client) {
+    return;
+}
+
+void handle_except(struct client *client) {
+    return;
+}
+
+int accept_connections(int listen_fd) {
+    struct client *new;
+    int new_fd;
+    int added = 0;
+    while (1) {
+        new_fd = accept(listen_fd, NULL, NULL);
+        if (new_fd < 0) { // no more incoming or fatal error
+            perror("accept.\n");
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ENETDOWN &&
+                errno != EPROTO && errno != ENOPROTOOPT && errno != EHOSTDOWN &&
+                errno != ENONET && errno != EHOSTUNREACH && errno != EOPNOTSUPP &&
+                errno != ENETUNREACH) {
+                return -1;
+            }
+            return added;
+        }
+
+        // add new client to global client list (head) in read state
+        new = malloc(sizeof(struct client));
+        if (!new) {
+            perror("malloc failed.\n");
+            return -1;
+        }
+        new->buff = malloc(CLIENT_BUFF_BLOCKSIZE);
+        if (!new) {
+            perror("malloc failed.\n");
+            free(new);
+            return -1;
+        }
+        new->len = 0;
+        new->capacity = CLIENT_BUFF_BLOCKSIZE;
+        new->fd = new_fd;
+        new->state = CLIENT_READ;
+        new->next = client_list;
+
+        client_list = new;
+
+        added += 1;
+    }
+}
+
+struct client *find_client(int client_fd) {
+    struct client *cur = client_list;
+    while (cur) {
+        if (cur->fd == client_fd) {
+            return cur;
+        } else {
+            cur = cur->next;
+        }
+    }
+
+    return NULL;
+}
+
+void cleanup_server(int listen_fd) {
+    struct client *cur = client_list;
+    struct client *temp = NULL;
+    while (cur) {
+        temp = cur->next;
+        free(cur->buff);
+        close(cur->fd); // close all open sockets
+        free(cur);
+        cur = temp;
+    }
+    cur = NULL;
+    temp = NULL;
+
+    close(listen_fd); // close listening socket fd
 }
 
 int main(int argc, char **argv)
@@ -182,45 +265,73 @@ int main(int argc, char **argv)
     fd_set efds;
 
     // MAIN SERVER LOOP
-    int retval;
-    int max_fd;
-    int i;
+    int retval, max_fd, i;
+    struct client *c;
     while (running) {
-        // init fd sets from client list & set max fd value
+        // init fd sets from global client list & set max fd value
         max_fd = init_sets(sock_fd, &rfds, &wfds, &efds);
 
         // get ready fds
         retval = select(max_fd + 1, &rfds, &wfds, &efds, NULL);
         if (retval == -1) {
             perror("Failed to get fds in select.\n");
-            close(sock_fd);
+            cleanup_server(sock_fd);
             return -1;
         }
 
         for (i = 0; i <= max_fd; i++) {
             // read set (check for listening socket fd)
+            if (FD_ISSET(i, &rfds)) {
+                if (i == sock_fd) {
+                    // accept and configure all incoming connections
+                    retval = accept_connections(sock_fd);
+                    if (retval == -1) {
+                        cleanup_server(sock_fd);
+                        return -1;
+                    }
+                } else {
+                    // search client list for connection with fd
+                    c = find_client(i);
+                    if (!c) {
+                        fprintf(stderr, "client in rfds not in clist.\n");
+                        continue;
+                    }
+
+                    handle_read(c);
+                }
+                continue;
+            }
 
             // write set
+            if (FD_ISSET(i, &wfds)) {
+                // search client list for connection with fd
+                c = find_client(i);
+                if (!c) {
+                    fprintf(stderr, "client in wfds not in clist.\n");
+                    continue;
+                }
 
-            // error set
+                handle_write(c);
+                continue;
+            }
+
+            // except set
+            if (FD_ISSET(i, &efds)) {
+                // search client list for connection with fd
+                c = find_client(i);
+                if (!c) {
+                    fprintf(stderr, "client in efds not in clist.\n");
+                    continue;
+                }
+
+                handle_except(c);
+                continue;
+            }
         }
-        
     }
 
-    // clean up stuff
     printf("Server exiting cleanly.\n");
-    close(sock_fd);
-    struct client *cur = client_list;
-    struct client *temp = NULL;
-    while (cur) {
-        temp = cur->next;
-        free(cur->buff);
-        close(cur->fd);
-        free(cur);
-        cur = temp;
-    }
-    cur = NULL;
-    temp = NULL;
+    cleanup_server(sock_fd);
 
     return 0;
 }
