@@ -6,7 +6,7 @@
 #define CLIENT_READ 1
 #define CLIENT_WRITE 2
 #define CLIENT_EXCEPT 3
-#define CLIENT_BUFF_BLOCKSIZE 150
+#define CLIENT_BUFF_BLOCKSIZE 250
 
 struct client {
     char *buff;
@@ -27,6 +27,18 @@ int init_sets(int listen_fd, fd_set *r, fd_set *w, fd_set *e);
     Performs next read on given client socket and updates state.
 */
 void handle_read(struct client *client);
+
+/*
+    Looks for a CRLF sequence in buff up to len. Returns pointer to start of
+    CRLF if found, else returns -1.
+*/
+char *find_crlf(const char *buff, int len);
+
+/*
+    Looks for a CRLFCRLF sequence in buff up to len. Returns 0 if found, else
+    returns -1.
+*/
+int find_crlfcrlf(const char *buff, int len);
 
 /*
     Performs next write on given client socket and updates state.
@@ -55,5 +67,11 @@ struct client *find_client(int client_fd);
     Free memory in global client list and close listening fd.
 */
 void cleanup_server(int listen_fd);
+
+/*
+    Close connection associated with client_fd and free memory in global client
+    list.
+*/
+void close_client(int client_fd)
 
 #endif

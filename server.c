@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/select.h>
+#include <unistd.h>
 
 #include "server.h"
 
@@ -52,7 +53,87 @@ int init_sets(int listen_fd, fd_set *r, fd_set *w, fd_set *e) {
 }
 
 void handle_read(struct client *client) {
-    return;
+    char *crlf = NULL;
+    char request_line[500];
+    int request_line_len;
+    char method[16];
+    char uri[256];
+    char http_version[16];
+    int c;
+    // read blocksize bytes from client fd into struct buffer
+    ssize_t ret = read(client->fd, client->buff + client->len, CLIENT_BUFF_BLOCKSIZE);
+    if (ret < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            perror("read failed.\n");
+            close_client(client->fd);
+            return;
+        }
+    } else if (ret == 0) { // client disconnected
+        close_client(client->fd);
+        return;
+    } else { // read some bytes
+        client->len += ret;
+        crlf = find_crlf(client->buff, client->len);
+        if (crlf) { // found line 1
+            request_line_len = crlf - client->buff; // assume line 1 < 500 bytes
+            memcpy(request_line, client->buff, request_line_len);
+            request_line[request_line_len] = '\0';
+
+            // validate parameters
+            if (sscanf(request_line, "%s %s %s", method, uri, http_version) != 3) {
+                // malformed request line, close client TODO: 404 response?
+                fprintf(stderr, "Failed to parse request line.\n");
+                close_client(client->fd);
+                return;
+            }
+            if (strcmp("GET", method) + strcmp("HTTP/1.1", http_version) != 0) {
+                // invalid parameters, close client
+                fprintf(stderr, "Invalid request line parameters.\n");
+                close_client(client->fd);
+                return;
+            }
+
+            // 1st line present and valid: check for terminating sequence
+            c = find_crlfcrlf(client->buff, client->len);
+            if (c == 0) {
+                // full req present: req params > struct, clear buff, add response, move to write
+                return;
+            }
+        }
+
+        // full request not present: realloc buff, update capacity
+
+    }
+}
+
+char *find_crlf(const char *buff, int len) {
+    char *crlf = NULL;
+    int i;
+    if (len < 2) {
+        return NULL;
+    }
+    for (i = 0; i < len - 1; i++) {
+        if (buff[i] == '\r' && buff[i + 1] == '\n') {
+            crlf = buff + i;
+            return crlf;
+        }
+    }
+    
+    return NULL;
+}
+
+int find_crlfcrlf(const char *buff, int len) {
+    int i;
+    if (len < 4) {
+        return -1;
+    }
+    for (i = 0; i < len - 3; i++) {
+        if (buff[i] == '\r' && buff[i + 1] == '\n' && buff[i + 2] == '\r' && buff[i + 3] == '\n') {
+            return 0;
+        }
+    }
+
+    return -1;
 }
 
 void handle_write(struct client *client) {
@@ -131,6 +212,31 @@ void cleanup_server(int listen_fd) {
     temp = NULL;
 
     close(listen_fd); // close listening socket fd
+}
+
+void close_client(int client_fd) {
+    struct client *cur = client_list;
+    struct client *prev = NULL;
+    while (cur) {
+        if (cur->fd == client_fd) {
+            if (cur == client_list) {
+                client_list = cur->next;
+            } else {
+                prev->next = cur->next;
+            }
+
+            close(cur->fd);
+            free(cur->buff);
+            free(cur);
+            cur = NULL;
+            return;
+        } else {
+            prev = cur;
+            cur = cur->next;
+        }
+    }
+    
+    return;
 }
 
 int main(int argc, char **argv)
