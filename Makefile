@@ -25,11 +25,11 @@ endif
 
 all:  json-server-$(EXEC_SUFFIX)
 
-json-server-$(EXEC_SUFFIX): server.c
-	$(CC) $(CFLAGS) $(OSINC) $(OSLIB) $(OSDEF) server.c smartalloc.c -o $@
+json-server-$(EXEC_SUFFIX): json-server.c
+	$(CC) $(CFLAGS) $(OSINC) $(OSLIB) $(OSDEF) json-server.c smartalloc.c -o $@
 
 handin: README
-	handin bellardo 464_fp README server.c server.h smartalloc.c smartalloc.h Makefile
+	handin bellardo 464_fp README json-server.c json-server.h smartalloc.c smartalloc.h Makefile
 
 clean:
 	rm -rf json-server-* json-server-*.dSYM

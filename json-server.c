@@ -13,7 +13,7 @@
 #include <sys/select.h>
 #include <unistd.h>
 
-#include "server.h"
+#include "json-server.h"
 
 int running = 1;
 int pipefds[2];
