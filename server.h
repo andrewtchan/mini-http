@@ -18,10 +18,11 @@
 
 struct client {
     char *buff;
-    int len; // index of next writable/readable byte
+    int len; // index of next readable/writable byte 
     int capacity; // size of buffer or length of response
     int fd;
     int state;
+    int uri;
     struct client *next;
 };
 

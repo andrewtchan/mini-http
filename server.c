@@ -68,11 +68,11 @@ void handle_read(struct client *client) {
     ssize_t ret = read(client->fd, client->buff + client->len, CLIENT_BUFF_BLOCKSIZE);
     if (ret < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            perror("read failed.\n");
+            perror("read failed.");
             close_client(client->fd);
             return;
         }
-    } else if (ret == 0) { // client disconnected
+    } else if (ret == 0) { // client disconnected (EOF)
         close_client(client->fd);
         return;
     } else { // read some bytes from buffer
@@ -118,10 +118,13 @@ void handle_read(struct client *client) {
                 // make sure buffer can fit response & clear, add response, move to write
                 if (strcmp(uri, "/json/implemented.json") == 0) {
                     strcpy(client->buff, RES_IMPLEMENTED);
+                    client->uri = URI_IMPLEMENTED;
                 } else if (strcmp(uri, "/json/quit") == 0) {
                     strcpy(client->buff, RES_QUIT);
+                    client->uri = URI_QUIT;
                 } else {
                     strcpy(client->buff, RES_ABOUT);
+                    client->uri = URI_ABOUT;
                 }
                 client->len = 0;
                 client->capacity = strlen(client->buff); // get len of res (technically unsafe)
@@ -133,7 +136,7 @@ void handle_read(struct client *client) {
         // full request not present: blindly realloc buff + 250, update capacity
         client->buff = realloc(client->buff, client->capacity + CLIENT_BUFF_BLOCKSIZE);
         if (!client->buff) {
-            perror("realloc failed.\n");
+            perror("realloc failed.");
             close_client(client->fd); // TODO: 500 response?
             return;
         }
@@ -172,10 +175,30 @@ int find_crlfcrlf(char *buff, int len) {
 }
 
 void handle_write(struct client *client) {
+    // write capacity - len bytes to client fd
+    ssize_t ret = write(client->fd, client->buff + client->len, client->capacity - client->len);
+    if (ret < 0) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            perror("write failed.");
+            close_client(client->fd);
+            return;
+        }
+    } else { 
+        // check if all bytes of buffer written
+        client->len += ret;
+        if (client->len == client->capacity) {
+            if (client->uri == URI_QUIT) {
+                running = 0; // if /json/quit, end server loop
+            }
+
+            close_client(client->fd);
+        }
+    }
     return;
 }
 
 void handle_except(struct client *client) {
+    close_client(client->fd);
     return;
 }
 
@@ -190,7 +213,7 @@ int accept_connections(int listen_fd) {
                 errno != EPROTO && errno != ENOPROTOOPT && errno != EHOSTDOWN &&
                 errno != ENONET && errno != EHOSTUNREACH && errno != EOPNOTSUPP &&
                 errno != ENETUNREACH) {
-                    perror("accept() failed.\n");
+                    perror("accept() failed.");
                     return -1;
             }
             return added;
@@ -199,12 +222,12 @@ int accept_connections(int listen_fd) {
         // add new client to global client list (head) in read state
         new = malloc(sizeof(struct client));
         if (!new) {
-            perror("malloc failed.\n");
+            perror("malloc failed.");
             return -1;
         }
         new->buff = malloc(CLIENT_BUFF_BLOCKSIZE);
         if (!new) {
-            perror("malloc failed.\n");
+            perror("malloc failed.");
             free(new);
             return -1;
         }
@@ -212,6 +235,7 @@ int accept_connections(int listen_fd) {
         new->capacity = CLIENT_BUFF_BLOCKSIZE;
         new->fd = new_fd;
         new->state = CLIENT_READ;
+        new->uri = 0;
         new->next = client_list;
 
         client_list = new;
@@ -282,7 +306,7 @@ int main(int argc, char **argv)
 {
     // create self pipe to exit select() cleanly
     if (pipe(pipefds) == -1) {
-        perror("Failed to create self-pipe.\n");
+        perror("Failed to create self-pipe.");
         return -1;
     }
 
@@ -319,7 +343,7 @@ int main(int argc, char **argv)
     if (addr_version == AF_INET) {
         sock_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (sock_fd < 0) {
-            perror("Failed to create socket.\n");
+            perror("Failed to create socket.");
             close(pipefds[0]);
             close(pipefds[1]);
             return -1;
@@ -327,14 +351,14 @@ int main(int argc, char **argv)
     } else {
         sock_fd = socket(AF_INET6, SOCK_STREAM, 0);
         if (sock_fd < 0) {
-            perror("Failed to create socket.\n");
+            perror("Failed to create socket.");
             close(pipefds[0]);
             close(pipefds[1]);
             return -1;
         }
         int sock_opt = 0;
         if (setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &sock_opt, sizeof(sock_opt)) < 0) {
-            perror("Failed to clear V6ONLY socket option.\n");
+            perror("Failed to clear V6ONLY socket option.");
             close(sock_fd);
             close(pipefds[0]);
             close(pipefds[1]);
@@ -346,14 +370,14 @@ int main(int argc, char **argv)
     int cntl_flag;
     cntl_flag = fcntl(sock_fd, F_GETFL, 0);
     if (cntl_flag == -1) {
-        perror("Failed to get socket flags.\n");
+        perror("Failed to get socket flags.");
         close(sock_fd);
         close(pipefds[0]);
         close(pipefds[1]);
         return -1;
     }
     if (fcntl(sock_fd, F_SETFL, cntl_flag | O_NONBLOCK) == -1) {
-        perror("Failed to set socket flags.\n");
+        perror("Failed to set socket flags.");
         close(sock_fd);
         close(pipefds[0]);
         close(pipefds[1]);
@@ -368,7 +392,7 @@ int main(int argc, char **argv)
         server_addr.sin_port = htons(0);
         server_addr.sin_addr = v4.sin_addr;
         if (bind(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-            perror("Failed to bind socket to IPv4 address.\n");
+            perror("Failed to bind socket to IPv4 address.");
             close(sock_fd);
             close(pipefds[0]);
             close(pipefds[1]);
@@ -385,7 +409,7 @@ int main(int argc, char **argv)
             server_addr.sin6_addr = v6.sin6_addr;
         }
         if (bind(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-            perror("Failed to bind socket to IPv6 address.\n");
+            perror("Failed to bind socket to IPv6 address.");
             close(sock_fd);
             close(pipefds[0]);
             close(pipefds[1]);
@@ -395,7 +419,7 @@ int main(int argc, char **argv)
 
     // listen for 10 connections
     if (listen(sock_fd, 10) < 0) {
-        perror("Failed to listen.\n");
+        perror("Failed to listen.");
         close(sock_fd);
         close(pipefds[0]);
         close(pipefds[1]);
@@ -408,7 +432,7 @@ int main(int argc, char **argv)
         struct sockaddr_in temp;
         socklen_t len = sizeof(temp);
         if (getsockname(sock_fd, (struct sockaddr *)&temp, &len) == -1) {
-            perror("Failed to getsockname.\n");
+            perror("Failed to getsockname.");
             close(sock_fd);
             close(pipefds[0]);
             close(pipefds[1]);
@@ -419,7 +443,7 @@ int main(int argc, char **argv)
         struct sockaddr_in6 temp;
         socklen_t len = sizeof(temp);
         if (getsockname(sock_fd, (struct sockaddr *)&temp, &len) == -1) {
-            perror("Failed to getsockname.\n");
+            perror("Failed to getsockname.");
             close(sock_fd);
             close(pipefds[0]);
             close(pipefds[1]);
@@ -450,7 +474,7 @@ int main(int argc, char **argv)
             if (errno == EINTR) {
                 continue;
             } else {
-                perror("Failed to get fds in select.\n");
+                perror("Failed to get fds in select.");
                 cleanup_server(sock_fd);
                 return -1;
             }
