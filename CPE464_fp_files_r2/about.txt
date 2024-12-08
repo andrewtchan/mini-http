@@ -1,0 +1,6 @@
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 82
+
+{
+  "author": "John Bellardo",  "email": "bellardo@calpoly.edu",  "major": "CSC"}

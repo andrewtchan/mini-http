@@ -1,0 +1,6 @@
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 193
+
+[
+{ "feature": "about", "URL": "/json/about.json"},{ "feature": "quit", "URL": "/json/quit"},{ "feature": "status", "URL": "/json/status.json"},{ "feature": "fortune", "URL": "/json/fortune"}]

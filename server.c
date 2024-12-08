@@ -60,6 +60,7 @@ void handle_read(struct client *client) {
     char uri[256];
     char http_version[16];
     int c;
+
     // read blocksize bytes from client fd into struct buffer
     ssize_t ret = read(client->fd, client->buff + client->len, CLIENT_BUFF_BLOCKSIZE);
     if (ret < 0) {
@@ -71,7 +72,7 @@ void handle_read(struct client *client) {
     } else if (ret == 0) { // client disconnected
         close_client(client->fd);
         return;
-    } else { // read some bytes
+    } else { // read some bytes from buffer
         client->len += ret;
         crlf = find_crlf(client->buff, client->len);
         if (crlf) { // found line 1
@@ -80,29 +81,60 @@ void handle_read(struct client *client) {
             request_line[request_line_len] = '\0';
 
             // validate parameters
-            if (sscanf(request_line, "%s %s %s", method, uri, http_version) != 3) {
-                // malformed request line, close client TODO: 404 response?
+            if (sscanf(request_line, "%s %s %s", method, uri, http_version) != 3) { // malformed request line, 404 response
                 fprintf(stderr, "Failed to parse request line.\n");
-                close_client(client->fd);
+                // make sure buffer can fit 404, then add it and move to write state
+                strcpy(client->buff, RES_404);
+                client->len = 0;
+                client->capacity = strlen(client->buff); // get len of res (technically unsafe)
+                client->state = CLIENT_WRITE;
                 return;
             }
-            if (strcmp("GET", method) + strcmp("HTTP/1.1", http_version) != 0) {
-                // invalid parameters, close client
-                fprintf(stderr, "Invalid request line parameters.\n");
-                close_client(client->fd);
+            if (strcmp(method, "GET") + strcmp(http_version, "HTTP/1.1") != 0) { // invalid parameters, 404 response
+                fprintf(stderr, "Unsupported request method and/or HTTP version.\n");
+                // make sure buffer can fit 404, then add it and move to write state
+                strcpy(client->buff, RES_404);
+                client->len = 0;
+                client->capacity = strlen(client->buff); // get len of res (technically unsafe)
+                client->state = CLIENT_WRITE;
+                return;
+            }
+            if (strcmp(uri, "/json/implemented.json") != 0 && strcmp(uri, "/json/quit") != 0 && strcmp(uri, "/json/about.json") != 0) { // unsupported uri, 404 response
+                fprintf(stderr, "Requested resource (URI) doesn't exist.\n");
+                // make sure buffer can fit 404, then add it and move to write state
+                strcpy(client->buff, RES_404);
+                client->len = 0;
+                client->capacity = strlen(client->buff); // get len of res (technically unsafe)
+                client->state = CLIENT_WRITE;
                 return;
             }
 
             // 1st line present and valid: check for terminating sequence
             c = find_crlfcrlf(client->buff, client->len);
-            if (c == 0) {
-                // full req present: req params > struct, clear buff, add response, move to write
+            if (c == 0) { // full req present
+                // make sure buffer can fit response & clear, add response, move to write
+                if (strcmp(uri, "/json/implemented.json") == 0) {
+                    strcpy(client->buff, RES_IMPLEMENTED);
+                } else if (strcmp(uri, "/json/quit") == 0) {
+                    strcpy(client->buff, RES_QUIT);
+                } else {
+                    strcpy(client->buff, RES_ABOUT);
+                }
+                client->len = 0;
+                client->capacity = strlen(client->buff); // get len of res (technically unsafe)
+                client->state = CLIENT_WRITE;
                 return;
             }
         }
 
-        // full request not present: realloc buff, update capacity
-
+        // full request not present: blindly realloc buff + 250, update capacity
+        client->buff = realloc(client->buff, client->capacity + CLIENT_BUFF_BLOCKSIZE);
+        if (!client->buff) {
+            perror("realloc failed.\n");
+            close_client(client->fd); // TODO: 500 response?
+            return;
+        }
+        client->capacity += CLIENT_BUFF_BLOCKSIZE;
     }
 }
 
@@ -254,10 +286,8 @@ int main(int argc, char **argv)
     }
     if (argc == 2) {
         if (inet_pton(AF_INET, argv[1], &(v4.sin_addr)) == 1) {
-            printf("Valid IPv4 address: %s\n", argv[1]);
             addr_version = AF_INET;
         } else if (inet_pton(AF_INET6, argv[1], &(v6.sin6_addr)) == 1) {
-            printf("Valid IPv6 address: %s\n", argv[1]);
             addr_version = AF_INET6;
         } else {
             fprintf(stderr, "Invalid IP address: %s\n", argv[1]);
