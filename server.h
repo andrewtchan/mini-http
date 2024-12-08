@@ -40,13 +40,13 @@ void handle_read(struct client *client);
     Looks for a CRLF sequence in buff up to len. Returns pointer to start of
     CRLF if found, else returns -1.
 */
-char *find_crlf(const char *buff, int len);
+char *find_crlf(char *buff, int len);
 
 /*
     Looks for a CRLFCRLF sequence in buff up to len. Returns 0 if found, else
     returns -1.
 */
-int find_crlfcrlf(const char *buff, int len);
+int find_crlfcrlf(char *buff, int len);
 
 /*
     Performs next write on given client socket and updates state.
@@ -80,6 +80,6 @@ void cleanup_server(int listen_fd);
     Close connection associated with client_fd and free memory in global client
     list.
 */
-void close_client(int client_fd)
+void close_client(int client_fd);
 
 #endif

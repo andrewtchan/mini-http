@@ -16,10 +16,12 @@
 #include "server.h"
 
 int running = 1;
+int pipefds[2];
 struct client *client_list = NULL;
 
 void sigint_handler(int sig) {
     running = 0;
+    write(pipefds[1], "a", 1); // wake select() from write end if blocking
 }
 
 int init_sets(int listen_fd, fd_set *r, fd_set *w, fd_set *e) {
@@ -27,7 +29,8 @@ int init_sets(int listen_fd, fd_set *r, fd_set *w, fd_set *e) {
     FD_ZERO(w);
     FD_ZERO(e);
     FD_SET(listen_fd, r); // add listening socket to read set
-    int max_fd = listen_fd;
+    FD_SET(pipefds[0], r); // add self-pipe to read set
+    int max_fd = listen_fd > pipefds[0] ? listen_fd : pipefds[0];
 
     // loop over client list, adding fd's to sets based on state and update max
     struct client *cur = client_list;
@@ -138,7 +141,7 @@ void handle_read(struct client *client) {
     }
 }
 
-char *find_crlf(const char *buff, int len) {
+char *find_crlf(char *buff, int len) {
     char *crlf = NULL;
     int i;
     if (len < 2) {
@@ -154,7 +157,7 @@ char *find_crlf(const char *buff, int len) {
     return NULL;
 }
 
-int find_crlfcrlf(const char *buff, int len) {
+int find_crlfcrlf(char *buff, int len) {
     int i;
     if (len < 4) {
         return -1;
@@ -183,12 +186,12 @@ int accept_connections(int listen_fd) {
     while (1) {
         new_fd = accept(listen_fd, NULL, NULL);
         if (new_fd < 0) { // no more incoming or fatal error
-            perror("accept.\n");
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != ENETDOWN &&
                 errno != EPROTO && errno != ENOPROTOOPT && errno != EHOSTDOWN &&
                 errno != ENONET && errno != EHOSTUNREACH && errno != EOPNOTSUPP &&
                 errno != ENETUNREACH) {
-                return -1;
+                    perror("accept() failed.\n");
+                    return -1;
             }
             return added;
         }
@@ -244,6 +247,10 @@ void cleanup_server(int listen_fd) {
     temp = NULL;
 
     close(listen_fd); // close listening socket fd
+
+    // close self pipe
+    close(pipefds[0]);
+    close(pipefds[1]);
 }
 
 void close_client(int client_fd) {
@@ -273,6 +280,12 @@ void close_client(int client_fd) {
 
 int main(int argc, char **argv)
 {
+    // create self pipe to exit select() cleanly
+    if (pipe(pipefds) == -1) {
+        perror("Failed to create self-pipe.\n");
+        return -1;
+    }
+
     // set up signal handler
     signal(SIGINT, sigint_handler);
 
@@ -282,6 +295,8 @@ int main(int argc, char **argv)
     int addr_version;
     if (argc != 1 && argc != 2) {
         printf("Usage: %s [IP address]\n", argv[0]);
+        close(pipefds[0]);
+        close(pipefds[1]);
         return 1;
     }
     if (argc == 2) {
@@ -291,10 +306,11 @@ int main(int argc, char **argv)
             addr_version = AF_INET6;
         } else {
             fprintf(stderr, "Invalid IP address: %s\n", argv[1]);
+            close(pipefds[0]);
+            close(pipefds[1]);
             return 1;
         }
     } else {
-        printf("No IP address provided, binding to all interfaces.\n");
         addr_version = 0;
     }
 
@@ -304,18 +320,24 @@ int main(int argc, char **argv)
         sock_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (sock_fd < 0) {
             perror("Failed to create socket.\n");
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
     } else {
         sock_fd = socket(AF_INET6, SOCK_STREAM, 0);
         if (sock_fd < 0) {
             perror("Failed to create socket.\n");
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
         int sock_opt = 0;
         if (setsockopt(sock_fd, IPPROTO_IPV6, IPV6_V6ONLY, &sock_opt, sizeof(sock_opt)) < 0) {
             perror("Failed to clear V6ONLY socket option.\n");
             close(sock_fd);
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
     }
@@ -326,11 +348,15 @@ int main(int argc, char **argv)
     if (cntl_flag == -1) {
         perror("Failed to get socket flags.\n");
         close(sock_fd);
+        close(pipefds[0]);
+        close(pipefds[1]);
         return -1;
     }
     if (fcntl(sock_fd, F_SETFL, cntl_flag | O_NONBLOCK) == -1) {
         perror("Failed to set socket flags.\n");
         close(sock_fd);
+        close(pipefds[0]);
+        close(pipefds[1]);
         return -1;
     }
 
@@ -344,6 +370,8 @@ int main(int argc, char **argv)
         if (bind(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
             perror("Failed to bind socket to IPv4 address.\n");
             close(sock_fd);
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
     } else {
@@ -359,6 +387,8 @@ int main(int argc, char **argv)
         if (bind(sock_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
             perror("Failed to bind socket to IPv6 address.\n");
             close(sock_fd);
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
     }
@@ -367,6 +397,8 @@ int main(int argc, char **argv)
     if (listen(sock_fd, 10) < 0) {
         perror("Failed to listen.\n");
         close(sock_fd);
+        close(pipefds[0]);
+        close(pipefds[1]);
         return -1;
     }
 
@@ -378,6 +410,8 @@ int main(int argc, char **argv)
         if (getsockname(sock_fd, (struct sockaddr *)&temp, &len) == -1) {
             perror("Failed to getsockname.\n");
             close(sock_fd);
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
         port = ntohs(temp.sin_port);
@@ -387,6 +421,8 @@ int main(int argc, char **argv)
         if (getsockname(sock_fd, (struct sockaddr *)&temp, &len) == -1) {
             perror("Failed to getsockname.\n");
             close(sock_fd);
+            close(pipefds[0]);
+            close(pipefds[1]);
             return -1;
         }
         port = ntohs(temp.sin6_port);
@@ -402,6 +438,7 @@ int main(int argc, char **argv)
 
     // MAIN SERVER LOOP
     int retval, max_fd, i;
+    char self_pipe_buff[1];
     struct client *c;
     while (running) {
         // init fd sets from global client list & set max fd value
@@ -410,9 +447,13 @@ int main(int argc, char **argv)
         // get ready fds
         retval = select(max_fd + 1, &rfds, &wfds, &efds, NULL);
         if (retval == -1) {
-            perror("Failed to get fds in select.\n");
-            cleanup_server(sock_fd);
-            return -1;
+            if (errno == EINTR) {
+                continue;
+            } else {
+                perror("Failed to get fds in select.\n");
+                cleanup_server(sock_fd);
+                return -1;
+            }
         }
 
         for (i = 0; i <= max_fd; i++) {
@@ -425,6 +466,9 @@ int main(int argc, char **argv)
                         cleanup_server(sock_fd);
                         return -1;
                     }
+                } else if (i == pipefds[0]) {
+                    read(pipefds[0], self_pipe_buff, 1);
+                    break; // exit server loop & shut down
                 } else {
                     // search client list for connection with fd
                     c = find_client(i);
