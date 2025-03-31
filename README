@@ -1,1 +1,4 @@
-advice to students: don't do something you might regret here...
+a small HTTP server with event-driven concurrency using the select() API
+
+
+advice to students: don't do something you will regret here.
